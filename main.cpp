@@ -17,6 +17,12 @@ struct AABB
     AABB(vec3 min, vec3 max) : min(min), max(max) {}
 };
 
+struct BSphere
+{
+    vec3 position;
+    float radius;
+};
+
 struct Transform
 {
     vec3 scalexyz;
@@ -42,6 +48,8 @@ struct Transform
         TestBed::DrawArrow(position, position + rotation * vec3(0, 1, 0), col32::green);
         TestBed::DrawArrow(position, position + rotation * vec3(0, 0, 1), col32::blue);
         TestBed::DrawOBB(GetMatrix(), col32::purple, true);
+        float sphereRad = length(scalexyz);
+        TestBed::DrawSphere(position, sphereRad, col32(255,255,255,40), 2);
     }
 
 };
@@ -90,15 +98,21 @@ void FrustumTest::Init()
             {
                 auto entity = registry.create();
                 
-                registry.assign<Transform>(entity,
-                    vec3(((10 + std::rand()) % 100) / 100.f, ((10 + std::rand()) % 100) / 100.f, ((10 + std::rand()) % 100) / 100.f),
-                    quat(1, 0, 0, 0),
-                    vec3((x - 5) * 5, y * 3, (z - 5) * 5));
+//                 registry.assign<Transform>(entity,
+//                     vec3(((10 + std::rand()) % 100) / 100.f, ((10 + std::rand()) % 100) / 100.f, ((10 + std::rand()) % 100) / 100.f),
+//                     quat(1, 0, 0, 0),
+//                     vec3((x - 5) * 5, y * 3, (z - 5) * 5));
 
-                registry.assign<Velocity>(entity,
-                    vec3(0, 0, (std::rand() % 1000) / 100.f) * 0.01f,
-                    vec3((std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f) * 0.1f
+//                 registry.assign<Velocity>(entity,
+//                     vec3(0, 0, (std::rand() % 1000) / 100.f) * 0.01f,
+//                     vec3((std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f) * 0.1f
+//                     );
+
+                registry.assign<BSphere>(entity,
+                    vec3((x - 5) * 5, y * 3, (z - 5) * 5),
+                    ((10 + std::rand()) % 100) / 100.f
                     );
+
             }
 
     //add cullers
@@ -111,6 +125,11 @@ void FrustumTest::Init()
     SetCameraYawPitch(-35, 90);
 }
 
+bool NaiveCull(vec3& pos, float& radius, vec4& plane)
+{
+    return plane.x * pos.x + plane.y * pos.y + plane.z * pos.z + plane.w <= -radius;
+}
+
 void FrustumTest::Update(float dt)
 {
     //DrawGrid();
@@ -121,7 +140,75 @@ void FrustumTest::Update(float dt)
     });
 
     registry.view<Transform, Frustum>().each([this](auto entity, Transform& transform, Frustum& fr) {
-        DrawFrustum(fr.GetFrustumMatrix(transform), col32::white);
+        
+        mat4 frustumMat4 = fr.GetFrustumMatrix(transform);
+        DrawFrustum(frustumMat4, col32::white);
+
+        registry.view<BSphere>().each([this, &frustumMat4](auto entity, BSphere& s) {
+            auto color = col32::white;
+
+            mat4& m = frustumMat4;
+
+            vec4 right;
+            right.x = m[0][3] + m[0][0];
+            right.y = m[1][3] + m[1][0];
+            right.z = m[2][3] + m[2][0];
+            right.w = m[3][3] + m[3][0];
+
+            vec4 left;
+            left.x = m[0][3] - m[0][0];
+            left.y = m[1][3] - m[1][0];
+            left.z = m[2][3] - m[2][0];
+            left.w = m[3][3] - m[3][0];
+
+            vec4 top;
+            top.x = m[0][3] - m[0][1];
+            top.y = m[1][3] - m[1][1];
+            top.z = m[2][3] - m[2][1];
+            top.w = m[3][3] - m[3][1];
+
+            vec4 bottom;
+            bottom.x = m[0][3] + m[0][1];
+            bottom.y = m[1][3] + m[1][1];
+            bottom.z = m[2][3] + m[2][1];
+            bottom.w = m[3][3] + m[3][1];
+
+            vec4 far;
+            far.x = m[0][2];
+            far.y = m[1][2];
+            far.z = m[2][2];
+            far.w = m[3][2];
+
+            vec4 near;
+            near.x = m[0][3] - m[0][2];
+            near.y = m[1][3] - m[1][2];
+            near.z = m[2][3] - m[2][2];
+            near.w = m[3][3] - m[3][2];
+            
+            /*if (NaiveCull(s.position, s.radius, right)) color = col32::red;
+            else if (NaiveCull(s.position, s.radius, left)) color = col32::red;
+            else if (NaiveCull(s.position, s.radius, bottom)) color = col32::red;
+            else if (NaiveCull(s.position, s.radius, top)) color = col32::red;*/
+
+
+
+            __m128 sphereVec = _mm_load_ps(&s);
+            //__m128 planeVec = _mm_load_ps(&left);
+            //__m128 _mm_mul_ps(sphereVec, planeVec);
+
+
+            __m128 fourSpheresX = _mm_splat_ps(sphereVec, 0);
+
+
+
+            //plane.x * pos.x + plane.y * pos.y + plane.z * pos.z + plane.w <= -radius;
+            
+
+
+
+            DrawSphereAuto(s.position, s.radius, color);
+        });
+
     });
 
 }
