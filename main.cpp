@@ -18,12 +18,6 @@ class FrustumTest : public TestBed {
     virtual void Shutdown() override;
 };
 
-struct AABB
-{
-    vec3 min, max;
-    AABB(vec3 min, vec3 max) : min(min), max(max) {}
-};
-
 struct Transform
 {
     vec3 scalexyz;
@@ -57,13 +51,12 @@ struct Transform
 
 struct BSphere
 {
-    //vec3 localPosition; TODO
     __m128 simdCacheX;
     __m128 simdCacheY;
     __m128 simdCacheZ;
     __m128 simdCacheR;
-
     float radius;
+    uint32_t pad;
 
     void UpdateCaches(Transform t)
     {
@@ -95,7 +88,6 @@ struct Velocity {
         t.Rotate(quat(angular*dt));
         t.Translate(linear*dt);
     }
-
 };
 
 struct Frustum
@@ -120,16 +112,13 @@ struct Frustum
     }
 };
 
-
-
 void FrustumTest::Init()
 {
-    //add stuff to cull
-
     const int width = 100; //100
     const int height = 6; //6
     const float spacing = 2;
 
+    //add stuff to cull
     for (int z = 0; z < width; z++)
         for (int y = 0; y < height; y++)
             for (int x = 0; x < width; x++)
@@ -142,20 +131,10 @@ void FrustumTest::Init()
                      vec3((x - (width/2)) * spacing, (y - (height/2)) * spacing, (z - (width/2)) * spacing)
                      );
 
-//                 registry.assign<Velocity>(entity,
-//                     vec3(0, 0, (std::rand() % 1000) / 100.f) * 0.01f,
-//                     vec3((std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f, (std::rand() % 1000) / 1000.f) * 0.1f
-//                     );
-
-                auto& sphere = registry.assign<BSphere>(entity//,
-                    //vec3((x - (width/2)) * spacing, (y - (height/2)) * spacing, (z - (width/2)) * spacing),
-                    //((20 + std::rand()) % 100) / 100.f
-                    );
+                auto& sphere = registry.assign<BSphere>(entity);
 
                 sphere.radius = ((20 + std::rand()) % 100) / 100.f;
                 sphere.UpdateCaches(tf);
-
-
             }
 
     //add cullers
@@ -166,11 +145,6 @@ void FrustumTest::Init()
 
     SetCameraPosition(vec3(-5, 30, 5));
     SetCameraYawPitch(-35, 90);
-}
-
-bool NaiveCull(vec3& pos, float& radius, vec4& plane)
-{
-    return plane.x * pos.x + plane.y * pos.y + plane.z * pos.z + plane.w <= -radius;
 }
 
 __m128 _mm_add_ps(__m128 a, __m128 b, __m128 c)
@@ -189,25 +163,15 @@ __m128 _mm_set_ps_bw(float x, float y, float z, float w)
 }
 
 bool draw = false;
-bool drawCulled = false;
-bool simd = true;
 
 std::vector<uint> times;
 uint maxavg;
 float lerpAvg;
 
 std::vector<BSphere> inView;
-std::vector<BSphere> culled;
-
 std::mutex drawListMtx;
 
-void InsertDrawList(BSphere& s, bool culled)
-{
-    drawListMtx.lock();
-
-    drawListMtx.unlock();
-}
-
+#define MT
 void simdCull(BSphere& s, __m128* planes)
 {
     __m128 xs = _mm_mul_ps(planes[0], s.simdCacheX);
@@ -221,14 +185,14 @@ void simdCull(BSphere& s, __m128* planes)
     auto cull = _mm_movemask_ps(results);
 
     if (draw) {
-        //drawListMtx.lock();
-        if (cull) {
-            if (drawCulled)
-                culled.emplace_back(s);
-        }
-        else
+#ifdef MT
+        drawListMtx.lock();
+#endif
+        if (!cull)
             inView.emplace_back(s);
-        //drawListMtx.unlock();
+#ifdef MT
+        drawListMtx.unlock();
+#endif
     }
 }
 
@@ -249,83 +213,27 @@ void FrustumTest::Update(float dt)
         mat4& m = frustumMat4;
 
         vec4 right;
-        right.x = m[0][3] + m[0][0];
-        right.y = m[1][3] + m[1][0];
-        right.z = m[2][3] + m[2][0];
-        right.w = m[3][3] + m[3][0];
+        right.x = m[0][3] + m[0][0];right.y = m[1][3] + m[1][0];right.z = m[2][3] + m[2][0];right.w = m[3][3] + m[3][0];
 
         vec4 left;
-        left.x = m[0][3] - m[0][0];
-        left.y = m[1][3] - m[1][0];
-        left.z = m[2][3] - m[2][0];
-        left.w = m[3][3] - m[3][0];
+        left.x = m[0][3] - m[0][0];left.y = m[1][3] - m[1][0];left.z = m[2][3] - m[2][0];left.w = m[3][3] - m[3][0];
 
         vec4 top;
-        top.x = m[0][3] - m[0][1];
-        top.y = m[1][3] - m[1][1];
-        top.z = m[2][3] - m[2][1];
-        top.w = m[3][3] - m[3][1];
+        top.x = m[0][3] - m[0][1];top.y = m[1][3] - m[1][1];top.z = m[2][3] - m[2][1];top.w = m[3][3] - m[3][1];
 
         vec4 bottom;
-        bottom.x = m[0][3] + m[0][1];
-        bottom.y = m[1][3] + m[1][1];
-        bottom.z = m[2][3] + m[2][1];
-        bottom.w = m[3][3] + m[3][1];
-
-        //vec4 far;
-        //far.x = m[0][2];
-        //far.y = m[1][2];
-        //far.z = m[2][2];
-        //far.w = m[3][2];
-
-        //vec4 near;
-        //near.x = m[0][3] - m[0][2];
-        //near.y = m[1][3] - m[1][2];
-        //near.z = m[2][3] - m[2][2];
-        //near.w = m[3][3] - m[3][2];
-
-
+        bottom.x = m[0][3] + m[0][1];bottom.y = m[1][3] + m[1][1];bottom.z = m[2][3] + m[2][1];bottom.w = m[3][3] + m[3][1];
+        
         __m128 planes[4] = {
             _mm_set_ps_bw(left.x, right.x, top.x, bottom.x),
             _mm_set_ps_bw(left.y, right.y, top.y, bottom.y),
             _mm_set_ps_bw(left.z, right.z, top.z, bottom.z),
             _mm_set_ps_bw(left.w, right.w, top.w, bottom.w),
         };
-
         
-
-        auto view = registry.view<BSphere>();
-
         auto tp = TIME_HERE;
 
-        if (simd) {
-            //std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity) {
-            registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
-        }
-        else {
-            //std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
-            //registry.view<BSphere>().each([this, &left, &right, &top, &bottom, &culled, &inView](auto entity, BSphere& s) {
-            //    //BSphere& s = view.get(entity);
-
-            //    auto[pos, r] = s.GetCachedDataSlow();
-
-            //    bool cull = false;
-            //    
-            //    if (NaiveCull(pos, s.radius, right)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, left)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, bottom)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, top)) cull = true;
-
-            //    if (draw)
-            //        if (cull) {
-            //            if (drawCulled)
-            //                culled.emplace_back(s);
-            //        }
-            //        else
-            //            inView.emplace_back(s);
-
-            //});
-        }
+        registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
 
         auto el = (int)ELAPSEDuS(tp);
 
@@ -335,37 +243,18 @@ void FrustumTest::Update(float dt)
             auto[pos, r] = sphere.GetCachedDataSlow();
             DrawSphere(pos, r, col32::white, 8);
         }
-        for (BSphere sphere : culled)
-        {
-            auto[pos, r] = sphere.GetCachedDataSlow();
-            DrawSphere(pos, r, col32::red, 8);
-        }
-
-
+        
         times.emplace_back(el);
 
         float avg = accumulate(times.begin(), times.end(), 0) / (float)times.size();
-
-        if (lerpAvg == 0)
-            lerpAvg = avg;
-        else
-            lerpAvg = bx::lerp(lerpAvg, avg, 0.0001f);
-
-        if (times.size() > 120) {
-            times.erase(times.begin());
-        }
-
+        if (times.size() > 120) { times.erase(times.begin()); }
         maxavg = fmax(maxavg, avg);
 
         ImGui::Checkbox("draw", &draw);
-        ImGui::Checkbox("draw culled", &drawCulled);
-        ImGui::Checkbox("SIMD", &simd);
         ImGui::SliderInt("microSeconds", &el, avg-100, avg+100);
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
-        ImGui::SliderFloat("Lpd microSeconds", &lerpAvg, 0, maxavg, "%.1f");
 
         inView.clear();
-        culled.clear();
 
     });
 
