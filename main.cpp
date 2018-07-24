@@ -169,7 +169,7 @@ uint maxavg;
 float lerpAvg;
 
 std::vector<BSphere> inView;
-std::mutex drawListMtx;
+bool drawListMtx;
 
 #define MT
 void simdCull(BSphere& s, __m128* planes)
@@ -186,12 +186,12 @@ void simdCull(BSphere& s, __m128* planes)
 
     if (draw) {
 #ifdef MT
-        drawListMtx.lock();
+        drawListMtx = true;
 #endif
         if (!cull)
             inView.emplace_back(s);
 #ifdef MT
-        drawListMtx.unlock();
+        drawListMtx = false;
 #endif
     }
 }
