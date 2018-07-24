@@ -127,7 +127,7 @@ void FrustumTest::Init()
     //add stuff to cull
 
     const int width = 100; //100
-    const int height = 6; //6
+    const int height = 50; //6
     const float spacing = 2;
 
     for (int z = 0; z < width; z++)
@@ -221,14 +221,18 @@ void simdCull(BSphere& s, __m128* planes)
     auto cull = _mm_movemask_ps(results);
 
     if (draw) {
-        //drawListMtx.lock();
         if (cull) {
-            if (drawCulled)
+            if (drawCulled) {
+                drawListMtx.lock();
                 culled.emplace_back(s);
+                drawListMtx.unlock();
+            }
         }
-        else
+        else {
+            drawListMtx.lock();
             inView.emplace_back(s);
-        //drawListMtx.unlock();
+            drawListMtx.unlock();
+        }
     }
 }
 
@@ -299,8 +303,14 @@ void FrustumTest::Update(float dt)
         auto tp = TIME_HERE;
 
         if (simd) {
-            //std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity) {
-            registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
+
+            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity)
+            {
+                BSphere& s = view.get(entity);
+                simdCull(s, &planes[0]);
+            });
+
+            //registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
         }
         else {
             //std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
@@ -349,7 +359,7 @@ void FrustumTest::Update(float dt)
         if (lerpAvg == 0)
             lerpAvg = avg;
         else
-            lerpAvg = bx::lerp(lerpAvg, avg, 0.0001f);
+            lerpAvg = bx::lerp(lerpAvg, avg, 0.001f);
 
         if (times.size() > 120) {
             times.erase(times.begin());
