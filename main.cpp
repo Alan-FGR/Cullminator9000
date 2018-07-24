@@ -169,9 +169,9 @@ uint maxavg;
 float lerpAvg;
 
 std::vector<BSphere> inView;
-bool drawListMtx;
+std::vector<BSphere> culled;
+std::mutex drawListMtx;
 
-#define MT
 void simdCull(BSphere& s, __m128* planes)
 {
     __m128 xs = _mm_mul_ps(planes[0], s.simdCacheX);
@@ -185,14 +185,17 @@ void simdCull(BSphere& s, __m128* planes)
     auto cull = _mm_movemask_ps(results);
 
     if (draw) {
-#ifdef MT
-        drawListMtx = true;
-#endif
-        if (!cull)
+        if (!cull) {
+            drawListMtx.lock();
             inView.emplace_back(s);
-#ifdef MT
-        drawListMtx = false;
-#endif
+            drawListMtx.unlock();
+        }
+        else
+        {
+            drawListMtx.lock();
+            culled.emplace_back(s);
+            drawListMtx.unlock();
+        }
     }
 }
 
@@ -243,6 +246,12 @@ void FrustumTest::Update(float dt)
             auto[pos, r] = sphere.GetCachedDataSlow();
             DrawSphere(pos, r, col32::white, 8);
         }
+
+        for (BSphere sphere : culled)
+        {
+            auto[pos, r] = sphere.GetCachedDataSlow();
+            DrawSphere(pos, r, col32::red, 8);
+        }
         
         times.emplace_back(el);
 
@@ -255,6 +264,7 @@ void FrustumTest::Update(float dt)
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
 
         inView.clear();
+        culled.clear();
 
     });
 
