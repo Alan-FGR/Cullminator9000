@@ -2,6 +2,8 @@
 #include "Bigged/bigged.cpp"
 #include "entt.hpp"
 #include <chrono>
+#include <cmath>
+#include <execution>
 
 #define TIME_HERE std::chrono::high_resolution_clock::now();
 #define ELAPSEDµS(time_point) (uint)(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now()-time_point).count());
@@ -122,7 +124,7 @@ void FrustumTest::Init()
     //add cullers
     auto entity = registry.create();
     registry.assign<Transform>(entity, vec3(1), quat(1, 0, 0, 0), vec3(0));
-    registry.assign<Velocity>(entity, vec3(0, 0.f, 0), vec3(0, 1, 0));
+    registry.assign<Velocity>(entity, vec3(0, 0.f, 0), vec3(0, 0.1f, 0));
     registry.assign<Frustum>(entity, 50.f, 0.01f, 500.f, 2.f);
 
     SetCameraPosition(vec3(-5, 30, 5));
@@ -134,28 +136,26 @@ bool NaiveCull(vec3& pos, float& radius, vec4& plane)
     return plane.x * pos.x + plane.y * pos.y + plane.z * pos.z + plane.w <= -radius;
 }
 
-__m128 simd_splat_x(__m128 v) { return _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0)); }
-__m128 simd_splat_y(__m128 v) { return _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1)); }
-__m128 simd_splat_z(__m128 v) { return _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2)); }
-__m128 simd_splat_w(__m128 v) { return _mm_shuffle_ps(v, v, _MM_SHUFFLE(3, 3, 3, 3)); }
-
-__m128 simd_add(__m128 a, __m128 b, __m128 c)
+__m128 _mm_add_ps(__m128 a, __m128 b, __m128 c)
 {
     return _mm_add_ps(_mm_add_ps(a, b), c);
 }
 
-__m128 simd_add(__m128 a, __m128 b, __m128 c, __m128 d)
+__m128 _mm_add_ps(__m128 a, __m128 b, __m128 c, __m128 d)
 {
     return _mm_add_ps(_mm_add_ps(a, b), _mm_add_ps(c, d));
 }
 
-__m128 simd_set(float x, float y, float z, float w)
+__m128 _mm_set_ps_bw(float x, float y, float z, float w)
 {
     return _mm_set_ps(w, z, y, x);
 }
 
 bool draw = false;
 bool simd = true;
+
+std::vector<uint> times;
+uint maxavg;
 
 void FrustumTest::Update(float dt)
 {
@@ -165,6 +165,7 @@ void FrustumTest::Update(float dt)
         vel.ApplyToTransform(transform, dt);
         transform.DrawDebug();
     });
+
 
     registry.view<Transform, Frustum>().each([this](auto entity, Transform& transform, Frustum& fr) {
         
@@ -211,63 +212,88 @@ void FrustumTest::Update(float dt)
 
 
         const __m128 planes[4] = {
-            simd_set(left.x, right.x, top.x, bottom.x),
-            simd_set(left.y, right.y, top.y, bottom.y),
-            simd_set(left.z, right.z, top.z, bottom.z),
-            simd_set(left.w, right.w, top.w, bottom.w),
+            _mm_set_ps_bw(left.x, right.x, top.x, bottom.x),
+            _mm_set_ps_bw(left.y, right.y, top.y, bottom.y),
+            _mm_set_ps_bw(left.z, right.z, top.z, bottom.z),
+            _mm_set_ps_bw(left.w, right.w, top.w, bottom.w),
         };
 
+
+       
+
+
+
+        auto view = registry.view<BSphere>();
+
         auto tp = TIME_HERE;
+        
+        
 
-        if (simd)
-        registry.view<BSphere>().each([this, &frustumMat4, &planes](auto entity, BSphere& s) {
-            auto color = col32::white;
+        if (simd) {
+            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity) {
+                BSphere& s = view.get(entity);
 
-            __m128 sphereVec = _mm_load_ps(reinterpret_cast<float const*>(&s));
+                auto color = col32::white;
 
-            __m128 fourSpheresX = simd_splat_x(sphereVec);
-            __m128 fourSpheresY = simd_splat_y(sphereVec);
-            __m128 fourSpheresZ = simd_splat_z(sphereVec);
-            __m128 fourSpheresR = simd_splat_w(sphereVec);
-            
-            __m128 xs = _mm_mul_ps(planes[0], fourSpheresX);
-            __m128 ys = _mm_mul_ps(planes[1], fourSpheresY);
-            __m128 zs = _mm_mul_ps(planes[2], fourSpheresZ);
+                __m128 fourSpheresX = _mm_set_ps1(s.position.x);
+                __m128 fourSpheresY = _mm_set_ps1(s.position.y);
+                __m128 fourSpheresZ = _mm_set_ps1(s.position.z);
+                __m128 fourSpheresR = _mm_set_ps1(-s.radius);
 
-            __m128 added = simd_add(xs, ys, zs, planes[3]);
+                __m128 xs = _mm_mul_ps(planes[0], fourSpheresX);
+                __m128 ys = _mm_mul_ps(planes[1], fourSpheresY);
+                __m128 zs = _mm_mul_ps(planes[2], fourSpheresZ);
 
-            __m128 results = _mm_cmplt_ps(added, fourSpheresR);
+                __m128 added = _mm_add_ps(xs, ys, zs, planes[3]);
 
-            if (_mm_movemask_ps(results))
-                color = col32::red;
+                __m128 results = _mm_cmplt_ps(added, fourSpheresR);
 
-            if (draw)
-                DrawSphere(s.position, s.radius, color, 5);
+                if (_mm_movemask_ps(results))
+                    color = col32::red;
 
-        });
-        else
-        registry.view<BSphere>().each([this, &frustumMat4, &planes, &left, &right, &top, &bottom](auto entity, BSphere& s) {
-            auto color = col32::white;
+                if (draw)
+                    DrawSphere(s.position, s.radius, color, 5);
 
-            if (NaiveCull(s.position, s.radius, right)) color = col32::red;
-            else if (NaiveCull(s.position, s.radius, left)) color = col32::red;
-            else if (NaiveCull(s.position, s.radius, bottom)) color = col32::red;
-            else if (NaiveCull(s.position, s.radius, top)) color = col32::red;
-            
-            if (draw)
-                DrawSphere(s.position, s.radius, color, 5);
+            });
+        }
+        else {
+            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
+                BSphere& s = view.get(entity);
 
-        });
+                auto color = col32::white;
+
+                if (NaiveCull(s.position, s.radius, right)) color = col32::red;
+                else if (NaiveCull(s.position, s.radius, left)) color = col32::red;
+                else if (NaiveCull(s.position, s.radius, bottom)) color = col32::red;
+                else if (NaiveCull(s.position, s.radius, top)) color = col32::red;
+
+                if (draw)
+                    DrawSphere(s.position, s.radius, color, 5);
+
+            });
+        }
 
         auto el = (int)ELAPSEDµS(tp);
 
+        times.emplace_back(el);
+
+        float avg = accumulate(times.begin(), times.end(), 0) / (float)times.size();
+
+        if (times.size() > 60) {
+            times.erase(times.begin());
+        }
+
+        maxavg = fmax(maxavg, avg);
+
         ImGui::Checkbox("draw", &draw);
         ImGui::Checkbox("SIMD", &simd);
-        ImGui::SliderInt("microSeconds", &el, 0, 1000);
+        ImGui::SliderInt("microSeconds", &el, avg-100, avg+100);
+        ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
+
 
     });
 
-}
+};
 
 void FrustumTest::Shutdown()
 {
