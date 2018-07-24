@@ -16,6 +16,8 @@ class FrustumTest : public TestBed {
     virtual void Init() override;
     virtual void Update(float dt) override;
     virtual void Shutdown() override;
+public:
+    static bool drawListMtx;
 };
 
 struct Transform
@@ -140,7 +142,7 @@ void FrustumTest::Init()
     //add cullers
     auto entity = registry.create();
     registry.assign<Transform>(entity, vec3(1), quat(1, 0, 0, 0), vec3(0));
-    registry.assign<Velocity>(entity, vec3(0, 0.f, 0), vec3(0, 0.1f, 0));
+    registry.assign<Velocity>(entity, vec3(0, 0.f, 0), vec3(0, 1.1f, 0));
     registry.assign<Frustum>(entity, 50.f, 0.01f, 500.f, 2.f);
 
     SetCameraPosition(vec3(-5, 30, 5));
@@ -169,9 +171,9 @@ uint maxavg;
 float lerpAvg;
 
 std::vector<BSphere> inView;
-bool drawListMtx;
+bool FrustumTest::drawListMtx;
 
-#define MT
+//#define MT
 void simdCull(BSphere& s, __m128* planes)
 {
     __m128 xs = _mm_mul_ps(planes[0], s.simdCacheX);
@@ -186,12 +188,12 @@ void simdCull(BSphere& s, __m128* planes)
 
     if (draw) {
 #ifdef MT
-        drawListMtx = true;
+        FrustumTest::drawListMtx = true;
 #endif
         if (!cull)
-            inView.emplace_back(s);
+            inView.push_back(s);
 #ifdef MT
-        drawListMtx = false;
+        FrustumTest::drawListMtx = false;
 #endif
     }
 }
@@ -230,10 +232,25 @@ void FrustumTest::Update(float dt)
             _mm_set_ps_bw(left.z, right.z, top.z, bottom.z),
             _mm_set_ps_bw(left.w, right.w, top.w, bottom.w),
         };
-        
+
+        std::vector<BSphere> spheres;
+        for (int i = 0; i < 100 * 100 * 6; ++i)
+        {
+            BSphere bs{};
+            bs.radius = 1;
+            Transform ts{ vec3(1),quat(1,0,0,0),vec3(0,i,-10) };
+            bs.UpdateCaches(ts);
+            spheres.push_back(bs);
+        }
+
         auto tp = TIME_HERE;
 
-        registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
+        for (int i = 0; i < 100*100*6; ++i)
+        {
+            simdCull(spheres[i], &planes[0]);
+        }
+
+        //registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
 
         auto el = (int)ELAPSEDuS(tp);
 
@@ -243,7 +260,8 @@ void FrustumTest::Update(float dt)
             auto[pos, r] = sphere.GetCachedDataSlow();
             DrawSphere(pos, r, col32::white, 8);
         }
-        
+
+
         times.emplace_back(el);
 
         float avg = accumulate(times.begin(), times.end(), 0) / (float)times.size();
