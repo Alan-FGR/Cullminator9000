@@ -117,7 +117,7 @@ struct Frustum
 void FrustumTest::Init()
 {
     const int width = 100; //100
-    const int height = 6; //6
+    const int height = 50; //6
     const float spacing = 2;
 
     //add stuff to cull
@@ -173,6 +173,8 @@ float lerpAvg;
 std::vector<BSphere> inView;
 bool FrustumTest::drawListMtx;
 
+int culled;
+
 //#define MT
 void simdCull(BSphere& s, __m128* planes)
 {
@@ -185,6 +187,9 @@ void simdCull(BSphere& s, __m128* planes)
     __m128 results = _mm_cmplt_ps(added, s.simdCacheR);
 
     auto cull = _mm_movemask_ps(results);
+
+    if (cull)
+        culled++;
 
     if (draw) {
 #ifdef MT
@@ -234,7 +239,7 @@ void FrustumTest::Update(float dt)
         };
 
         std::vector<BSphere> spheres;
-        for (int i = 0; i < 100 * 100 * 6; ++i)
+        for (int i = 0; i < 100 * 100 * 50; ++i)
         {
             BSphere bs{};
             bs.radius = 1;
@@ -245,7 +250,7 @@ void FrustumTest::Update(float dt)
 
         auto tp = TIME_HERE;
 
-        for (int i = 0; i < 100*100*6; ++i)
+        for (int i = 0; i < 100*100*50; ++i)
         {
             simdCull(spheres[i], &planes[0]);
         }
@@ -271,8 +276,11 @@ void FrustumTest::Update(float dt)
         ImGui::Checkbox("draw", &draw);
         ImGui::SliderInt("microSeconds", &el, avg-100, avg+100);
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
+        ImGui::Text("%d", culled);
 
         inView.clear();
+
+        culled = 0;
 
     });
 
