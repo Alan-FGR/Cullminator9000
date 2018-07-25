@@ -127,7 +127,7 @@ void FrustumTest::Init()
     //add stuff to cull
 
     const int width = 100; //100
-    const int height = 6; //6
+    const int height = 50; //6
     const float spacing = 2;
 
     for (int z = 0; z < width; z++)
@@ -200,6 +200,9 @@ float lerpAvg;
 std::vector<BSphere> inView;
 std::vector<BSphere> culled;
 
+int inViewCount = 0;
+int culledCount = 0;
+
 std::mutex drawListMtx;
 
 void naiveCull(BSphere& s, vec4 &left, vec4 &right, vec4 &top, vec4 &bottom) {
@@ -212,7 +215,12 @@ void naiveCull(BSphere& s, vec4 &left, vec4 &right, vec4 &top, vec4 &bottom) {
     else if (NaiveCull(pos, s.radius, bottom)) cull = true;
     else if (NaiveCull(pos, s.radius, top)) cull = true;
 
-    if (draw)
+    if (cull)
+        culledCount++;
+    else
+        inViewCount++;
+
+    if (draw) {
         if (cull) {
             if (drawCulled) {
                 drawListMtx.lock();
@@ -225,6 +233,7 @@ void naiveCull(BSphere& s, vec4 &left, vec4 &right, vec4 &top, vec4 &bottom) {
             inView.emplace_back(s);
             drawListMtx.unlock();
         }
+    }
 }
 
 void simdCull(BSphere& s, __m128* planes)
@@ -238,6 +247,11 @@ void simdCull(BSphere& s, __m128* planes)
     __m128 results = _mm_cmplt_ps(added, s.simdCacheR);
 
     auto cull = _mm_movemask_ps(results);
+
+    if (cull)
+        culledCount++;
+    else
+        inViewCount++;
 
     if (draw) {
         if (cull) {
@@ -257,6 +271,9 @@ void simdCull(BSphere& s, __m128* planes)
 
 void FrustumTest::Update(float dt)
 {
+    inViewCount = 0;
+    culledCount = 0;
+
     DrawGrid();
 
     registry.view<Transform, Velocity>().each([this, &dt](auto entity, Transform& transform, Velocity& vel) {
@@ -332,42 +349,15 @@ void FrustumTest::Update(float dt)
             registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
         }
         else {
-
-            registry.view<BSphere, Transform>().each([this, &left, &right, &top, &bottom](auto entity, BSphere& s, Transform& t) {
-                bool cull = false;
-
-                auto& pos = t.position;
-
-                if (NaiveCull(pos, s.radius, right)) cull = true;
-                else if (NaiveCull(pos, s.radius, left)) cull = true;
-                else if (NaiveCull(pos, s.radius, bottom)) cull = true;
-                else if (NaiveCull(pos, s.radius, top)) cull = true;
-
-                if (draw) {
-                    if (cull) {
-                        if (drawCulled) {
-                            drawListMtx.lock();
-                            culled.emplace_back(s);
-                            drawListMtx.unlock();
-                        }
-                    }
-                    else {
-                        drawListMtx.lock();
-                        inView.emplace_back(s);
-                        drawListMtx.unlock();
-                    }
-                }
-            });
-
-//             if (mt)
-//             std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
-//                 BSphere& s = view.get(entity);
-// //                naiveCull(s, left, right, top, bottom);
-//             });
-//             else
-//             registry.view<BSphere>().each([this, &left, &right, &top, &bottom](auto entity, BSphere& s) {
-//                 //naiveCull(s, left, right, top, bottom);
-//             });
+             if (mt)
+             std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
+                 BSphere& s = view.get(entity);
+                 naiveCull(s, left, right, top, bottom);
+             });
+             else
+             registry.view<BSphere>().each([this, &left, &right, &top, &bottom](auto entity, BSphere& s) {
+                 naiveCull(s, left, right, top, bottom);
+             });
         }
 
         auto el = (int)ELAPSEDuS(tp);
@@ -406,6 +396,8 @@ void FrustumTest::Update(float dt)
         ImGui::SliderInt("microSeconds", &el, avg-100*abs(lerpAvg-avg), avg+100*abs(lerpAvg-avg));
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
         ImGui::SliderFloat("Lpd microSeconds", &lerpAvg, 0, maxavg, "%.1f");
+
+        ImGui::Text("culled: %d\ninview: %d", culledCount, inViewCount);
 
         inView.clear();
         culled.clear();
