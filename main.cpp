@@ -99,7 +99,7 @@ void FrustumTest::Init()
 {
     //add stuff to cull
     for (int z = 0; z < 100; z++)
-        for (int y = 0; y < 6; y++)
+        for (int y = 0; y < 50; y++)
             for (int x = 0; x < 100; x++)
             {
                 auto entity = registry.create();
@@ -227,10 +227,10 @@ void FrustumTest::Update(float dt)
 
         auto tp = TIME_HERE;
         
-        
+        int culled = 0;
 
         if (simd) {
-            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity) {
+            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes, &culled](const auto entity) {
                 BSphere& s = view.get(entity);
 
                 auto color = col32::white;
@@ -248,8 +248,10 @@ void FrustumTest::Update(float dt)
 
                 __m128 results = _mm_cmplt_ps(added, fourSpheresR);
 
-                if (_mm_movemask_ps(results))
+                if (_mm_movemask_ps(results)) {
                     color = col32::red;
+                    culled++;
+                }
 
                 if (draw)
                     DrawSphere(s.position, s.radius, color, 5);
@@ -257,7 +259,7 @@ void FrustumTest::Update(float dt)
             });
         }
         else {
-            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
+            std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top, &culled](const auto entity) {
                 BSphere& s = view.get(entity);
 
                 auto color = col32::white;
@@ -269,6 +271,8 @@ void FrustumTest::Update(float dt)
 
                 if (draw)
                     DrawSphere(s.position, s.radius, color, 5);
+                else
+                    culled++;
 
             });
         }
@@ -289,6 +293,7 @@ void FrustumTest::Update(float dt)
         ImGui::Checkbox("SIMD", &simd);
         ImGui::SliderInt("microSeconds", &el, avg-100, avg+100);
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
+        ImGui::Text("%d, %d", culled, 50 * 100 * 100 - culled);
 
 
     });
