@@ -127,7 +127,7 @@ void FrustumTest::Init()
     //add stuff to cull
 
     const int width = 100; //100
-    const int height = 50; //6
+    const int height = 6; //6
     const float spacing = 2;
 
     for (int z = 0; z < width; z++)
@@ -173,12 +173,12 @@ bool NaiveCull(vec3& pos, float& radius, vec4& plane)
     return plane.x * pos.x + plane.y * pos.y + plane.z * pos.z + plane.w <= -radius;
 }
 
-__m128 _mm_add_ps(__m128 a, __m128 b, __m128 c)
+__m128 _mm_add_ps(__m128& a, __m128& b, __m128& c)
 {
     return _mm_add_ps(_mm_add_ps(a, b), c);
 }
 
-__m128 _mm_add_ps(__m128 a, __m128 b, __m128 c, __m128 d)
+__m128 _mm_add_ps(__m128& a, __m128& b, __m128& c, __m128& d)
 {
     return _mm_add_ps(_mm_add_ps(a, b), _mm_add_ps(c, d));
 }
@@ -191,6 +191,7 @@ __m128 _mm_set_ps_bw(float x, float y, float z, float w)
 bool draw = false;
 bool drawCulled = false;
 bool simd = true;
+bool mt = true;
 
 std::vector<uint> times;
 uint maxavg;
@@ -201,11 +202,29 @@ std::vector<BSphere> culled;
 
 std::mutex drawListMtx;
 
-void InsertDrawList(BSphere& s, bool culled)
-{
-    drawListMtx.lock();
+void naiveCull(BSphere& s, vec4 &left, vec4 &right, vec4 &top, vec4 &bottom) {
+    auto[pos, r] = s.GetCachedDataSlow();
 
-    drawListMtx.unlock();
+    bool cull = false;
+
+    if (NaiveCull(pos, s.radius, right)) cull = true;
+    else if (NaiveCull(pos, s.radius, left)) cull = true;
+    else if (NaiveCull(pos, s.radius, bottom)) cull = true;
+    else if (NaiveCull(pos, s.radius, top)) cull = true;
+
+    if (draw)
+        if (cull) {
+            if (drawCulled) {
+                drawListMtx.lock();
+                culled.emplace_back(s);
+                drawListMtx.unlock();
+            }
+        }
+        else {
+            drawListMtx.lock();
+            inView.emplace_back(s);
+            drawListMtx.unlock();
+        }
 }
 
 void simdCull(BSphere& s, __m128* planes)
@@ -303,43 +322,56 @@ void FrustumTest::Update(float dt)
         auto tp = TIME_HERE;
 
         if (simd) {
-
+            if (mt)
             std::for_each(std::execution::par, view.begin(), view.end(), [&view, &planes](const auto entity)
             {
                 BSphere& s = view.get(entity);
                 simdCull(s, &planes[0]);
             });
-
-            //registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
+            else
+            registry.view<BSphere>().each([&planes](auto entity, BSphere& s) {simdCull(s, &planes[0]); });
         }
         else {
-            //std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
-            //registry.view<BSphere>().each([this, &left, &right, &top, &bottom, &culled, &inView](auto entity, BSphere& s) {
-            //    //BSphere& s = view.get(entity);
 
-            //    auto[pos, r] = s.GetCachedDataSlow();
+            registry.view<BSphere, Transform>().each([this, &left, &right, &top, &bottom](auto entity, BSphere& s, Transform& t) {
+                bool cull = false;
 
-            //    bool cull = false;
-            //    
-            //    if (NaiveCull(pos, s.radius, right)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, left)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, bottom)) cull = true;
-            //    else if (NaiveCull(pos, s.radius, top)) cull = true;
+                auto& pos = t.position;
 
-            //    if (draw)
-            //        if (cull) {
-            //            if (drawCulled)
-            //                culled.emplace_back(s);
-            //        }
-            //        else
-            //            inView.emplace_back(s);
+                if (NaiveCull(pos, s.radius, right)) cull = true;
+                else if (NaiveCull(pos, s.radius, left)) cull = true;
+                else if (NaiveCull(pos, s.radius, bottom)) cull = true;
+                else if (NaiveCull(pos, s.radius, top)) cull = true;
 
-            //});
+                if (draw) {
+                    if (cull) {
+                        if (drawCulled) {
+                            drawListMtx.lock();
+                            culled.emplace_back(s);
+                            drawListMtx.unlock();
+                        }
+                    }
+                    else {
+                        drawListMtx.lock();
+                        inView.emplace_back(s);
+                        drawListMtx.unlock();
+                    }
+                }
+            });
+
+//             if (mt)
+//             std::for_each(std::execution::par, view.begin(), view.end(), [&view, &right, &left, &bottom, &top](const auto entity) {
+//                 BSphere& s = view.get(entity);
+// //                naiveCull(s, left, right, top, bottom);
+//             });
+//             else
+//             registry.view<BSphere>().each([this, &left, &right, &top, &bottom](auto entity, BSphere& s) {
+//                 //naiveCull(s, left, right, top, bottom);
+//             });
         }
 
         auto el = (int)ELAPSEDuS(tp);
-
-
+        
         for (BSphere sphere : inView)
         {
             auto[pos, r] = sphere.GetCachedDataSlow();
@@ -359,7 +391,7 @@ void FrustumTest::Update(float dt)
         if (lerpAvg == 0)
             lerpAvg = avg;
         else
-            lerpAvg = bx::lerp(lerpAvg, avg, 0.001f);
+            lerpAvg = bx::lerp(lerpAvg, avg, 0.01f);
 
         if (times.size() > 120) {
             times.erase(times.begin());
@@ -370,7 +402,8 @@ void FrustumTest::Update(float dt)
         ImGui::Checkbox("draw", &draw);
         ImGui::Checkbox("draw culled", &drawCulled);
         ImGui::Checkbox("SIMD", &simd);
-        ImGui::SliderInt("microSeconds", &el, avg-100, avg+100);
+        ImGui::Checkbox("Multi threading", &mt);
+        ImGui::SliderInt("microSeconds", &el, avg-100*abs(lerpAvg-avg), avg+100*abs(lerpAvg-avg));
         ImGui::SliderFloat("AVG microSeconds", &avg, 0, maxavg, "%.1f");
         ImGui::SliderFloat("Lpd microSeconds", &lerpAvg, 0, maxavg, "%.1f");
 
